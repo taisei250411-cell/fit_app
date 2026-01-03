@@ -49,7 +49,7 @@ with st.form("diary_form"):
         with st.spinner("AIが考え中..."):
             try:
                 # Geminiからの応答を取得
-                model = genai.GenerativeModel('gemini-2.0-flash-exp') 
+                model = genai.GenerativeModel('gemini-1.5-flash') 
                 response = model.generate_content(prompt)
                 ai_reply = response.text
                 
