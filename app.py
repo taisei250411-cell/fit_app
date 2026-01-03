@@ -4,84 +4,92 @@ import pandas as pd
 import google.generativeai as genai
 from datetime import datetime
 
-# ページ設定
-st.set_page_config(page_title="My AI Diary", page_icon="📝")
-st.title("📝 AI交換日記")
+# --- 設定 ---
+# アプリのタイトル
+APP_TITLE = "My AI Tool"
+# AIへの命令（Google AI Studioで作ったプロンプトをここに貼ることもできます）
+SYSTEM_PROMPT = "あなたは優秀なアシスタントです。ユーザーの入力に対して的確に答えてください。"
 
-# 1. APIキーの設定（StreamlitのSecretsから読み込む）
+# ページ設定
+st.set_page_config(page_title=APP_TITLE, page_icon="⚡")
+st.title(f"⚡ {APP_TITLE}")
+
+# 1. APIキーの設定
 try:
+    # エラー対策：モデルを安定版のgemini-1.5-flashに変更
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
-    st.error("設定エラー: APIキーまたは接続設定が正しくありません。")
+    st.error("設定エラー: Secretsの設定を確認してください。")
     st.stop()
 
-# 2. 過去データの読み込み（キャッシュを使って高速化）
+# 2. データ読み込み（履歴表示用）
 def load_data():
-    # ワークシート名を指定（デフォルトはSheet1）
-    return conn.read(worksheet="Sheet1", ttl="0")
+    try:
+        return conn.read(worksheet="Sheet1", ttl="0")
+    except:
+        return pd.DataFrame(columns=["date", "input", "output"])
 
-try:
-    df = load_data()
-    # データが空の場合の処理
-    if df.empty:
-        df = pd.DataFrame(columns=["date", "content", "ai_comment"])
-except:
-    # シートがまだ読み込めない場合の初期化
-    df = pd.DataFrame(columns=["date", "content", "ai_comment"])
+df = load_data()
+if df.empty:
+    df = pd.DataFrame(columns=["date", "input", "output"])
 
-# 3. 日記の入力フォーム
-with st.form("diary_form"):
-    input_text = st.text_area("今日はどんな1日でしたか？", height=150)
-    submitted = st.form_submit_button("記録してAIに送る")
+# 3. 入力フォーム
+with st.form("main_form"):
+    # 日記ではなく汎用的な入力欄に変更
+    input_text = st.text_area("入力データ（質問やテキスト）", height=150)
+    submitted = st.form_submit_button("実行・保存")
 
     if submitted and input_text:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # --- AIへの指示（プロンプト） ---
-        prompt = f"""
-        あなたは親しい友人であり、専属のメンタルコーチです。
-        以下のユーザーの日記に対して、共感し、前向きなフィードバックを返してください。
-        
-        日記内容: {input_text}
-        """
-        
-        with st.spinner("AIが考え中..."):
+        with st.spinner("実行中..."):
             try:
-                # Geminiからの応答を取得
+                # --- ここでAIを動かす ---
+                # 安定して動く無料枠モデル（1.5 Flash）を使用
                 model = genai.GenerativeModel('gemini-1.5-flash') 
-                response = model.generate_content(prompt)
-                ai_reply = response.text
                 
-                # データフレームに追加
+                # システムプロンプトとユーザー入力を結合して送信
+                full_prompt = f"{SYSTEM_PROMPT}\n\nユーザー入力: {input_text}"
+                response = model.generate_content(full_prompt)
+                ai_output = response.text
+                
+                # --- 結果を表示 ---
+                st.success("完了")
+                st.markdown("### 🔹 AIの回答")
+                st.write(ai_output)
+
+                # --- データを保存 ---
                 new_data = pd.DataFrame([{
                     "date": now_str, 
-                    "content": input_text, 
-                    "ai_comment": ai_reply
+                    "input": input_text,     # 元の「content」列の代わりにinputとして保存
+                    "output": ai_output      # 元の「ai_comment」列の代わりにoutputとして保存
                 }])
                 
-                # スプレッドシートを更新
+                # スプレッドシートの列名に合わせて調整（既存シートを使うための処理）
+                # もし列名エラーが出たら、シートの1行目を date, input, output に書き換えてください
+                new_data.columns = df.columns[:3] 
+
                 updated_df = pd.concat([df, new_data], ignore_index=True)
                 conn.update(worksheet="Sheet1", data=updated_df)
                 
-                st.success("記録しました！")
-                st.rerun() # 画面更新
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
 
-# 4. 過去の記録を表示（新しい順）
+# 4. 過去の履歴（保存データ）
 st.divider()
-st.subheader("📚 過去の記録")
+st.subheader("📂 保存されたデータ")
 
 if not df.empty:
-    # 新しい順に並び替え
+    # 新しい順に表示
     df_rev = df.iloc[::-1]
+    dataframe_display = st.checkbox("表形式で見る", value=True)
     
-    for index, row in df_rev.iterrows():
-        with st.chat_message("user"):
-            st.write(f"**{row['date']}**")
-            st.write(row['content'])
-        
-        with st.chat_message("assistant"):
-            st.write(row['ai_comment'])
-        st.divider()
+    if dataframe_display:
+        st.dataframe(df_rev, use_container_width=True)
+    else:
+        for index, row in df_rev.iterrows():
+            st.caption(row.iloc[0]) # 日付
+            st.info(f"入: {row.iloc[1]}")
+            st.success(f"出: {row.iloc[2]}")
+            st.divider()
